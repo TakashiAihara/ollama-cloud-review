@@ -1,0 +1,149 @@
+name: Ollama Cloud PR Review
+description: Review a pull request with opencode on an Ollama Cloud model and post the review as one comment
+author: TakashiAihara
+branding:
+  icon: message-square
+  color: gray-dark
+
+inputs:
+  model:
+    description: Ollama Cloud model as opencode's ollama-cloud provider names it (https://models.dev), for example glm-5.3-flash
+    # No default: the models usable without credits found neither known bug in the trial the
+    # README describes, and which models are usable without credits has changed before.
+    required: true
+  api-key:
+    description: Ollama API key (https://ollama.com/settings/keys)
+    required: true
+  github-token:
+    description: Token opencode comments with. Needs pull-requests and issues write.
+    default: ${{ github.token }}
+
+runs:
+  using: composite
+  steps:
+    # An unset variable or secret passed in still satisfies required, and opencode then fails
+    # without naming the input.
+    - name: Check inputs
+      shell: bash
+      env:
+        MODEL: ${{ inputs.model }}
+        API_KEY: ${{ inputs.api-key }}
+        GH_TOKEN_IN: ${{ inputs.github-token }}
+        EVENT: ${{ github.event_name }}
+        RUNNER_OS_NAME: ${{ runner.os }}
+      run: |
+        # Paths below go into JSON unescaped; a Windows path's backslashes would break it.
+        [ "$RUNNER_OS_NAME" = Linux ] || { echo "::error::Run this on a Linux runner."; exit 1; }
+        [ -n "$MODEL" ] || { echo "::error::The model input is empty."; exit 1; }
+        [ -n "$API_KEY" ] || { echo "::error::The api-key input is empty."; exit 1; }
+        # Also guards the key check below: an empty pattern would match every line.
+        [ -n "$GH_TOKEN_IN" ] || { echo "::error::The github-token input is empty."; exit 1; }
+        [ "$EVENT" = pull_request ] || { echo "::error::Run this on pull_request, not $EVENT."; exit 1; }
+
+    - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      with:
+        # The merge base below needs the history of both sides.
+        fetch-depth: 0
+        # The review pushes nothing, so the token has no reason to sit in .git/config.
+        persist-credentials: false
+
+    # opencode re-fetches the PR branch with --depth=max(commits, 20), which makes the clone
+    # shallow and cuts the merge base off a PR of 20 commits or more. Find it while the
+    # history is still whole; a two-dot diff then needs only the two commits. The end is the
+    # event's head, not HEAD, so a force push between the event and the job does not drag
+    # unrelated commits into the diff.
+    - name: Write the PR's diff outside the worktree
+      shell: bash
+      env:
+        BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+      # Assigned first so a failing merge-base stops the step instead of writing an empty diff.
+      run: |
+        merge_base=$(git merge-base "$BASE_SHA" "$HEAD_SHA")
+        mkdir -p "$RUNNER_TEMP/ollama-cloud-review"
+        git diff "$merge_base" "$HEAD_SHA" > "$RUNNER_TEMP/ollama-cloud-review/pr.diff"
+
+    # shortcut: the action installs whatever opencode release is latest, so the binary is
+    # not pinned, and opencode fetches the PR branch anonymously, which only a public
+    # repository allows. Pin it and give the fetch credentials before a private one calls this.
+    - uses: anomalyco/opencode/github@148842ef7cb1bc34192b3fff57d0f9721ab9c801 # v1.19.4
+      env:
+        OLLAMA_API_KEY: ${{ inputs.api-key }}
+        GITHUB_TOKEN: ${{ inputs.github-token }}
+        # The action's agent input is not read at v1.19.4, so the agent comes from config.
+        # Without it the build agent may edit files, and the dirty tree turns the run into
+        # a push that contents: read refuses, losing the review. No shell at all: an allowed
+        # git command could still write through a redirect or an abbreviated --output, and a
+        # written .git/config runs commands. The diff is read from a file written above,
+        # outside the worktree; the last matching rule wins, so that one directory is
+        # allowed after everything outside the worktree is denied.
+        # The PR's own opencode.json and .opencode/ (agents, plugins, tools) would otherwise load
+        # from the checked-out tree, override the permissions below and run code.
+        # small_model is the same model: opencode otherwise names the session with a model of
+        # its own choosing, which on OpenRouter was a paid one (openrouter-review run
+        # 40321742692). toJSON quotes the caller's model so a stray quote cannot rewrite the
+        # permissions around it.
+        OPENCODE_DISABLE_PROJECT_CONFIG: "true"
+
+        OPENCODE_CONFIG_CONTENT: >-
+          {"default_agent": "plan", "share": "disabled",
+          "small_model": ${{ toJSON(format('ollama-cloud/{0}', inputs.model)) }}, "permission": {"edit": "deny",
+          "bash": "deny", "webfetch": "deny", "websearch": "deny", "external_directory":
+          {"*": "deny", "${{ runner.temp }}/ollama-cloud-review/*": "allow"}}}
+      with:
+        model: ollama-cloud/${{ inputs.model }}
+        use_github_token: true
+        prompt: |
+          このプルリクエストをレビューし、結果を日本語で 1 件のコメントにまとめてください。
+          - 変更の diff は `${{ runner.temp }}/ollama-cloud-review/pr.diff` にある。まずそれを読み、周りのコードはリポジトリのファイルを読んで確かめる
+          - 既存のコメントやレビューの指摘は繰り返さず、変更そのものを独立に見る
+          - ファイルを編集しない。コマンドは使えない
+          - 見るのはバグ、壊れうる入力・順序、テストが押さえていない挙動、セキュリティ
+          - 書式や好みの指摘は書かない
+          - 指摘ごとにファイルと行、何が起きるか、直し方を書く
+          - 指摘が無ければ「指摘なし」とだけ書く
+
+    # The session (prompts, replies, tool calls, the model's reasoning when it gives any) and
+    # opencode's own log are what tuning the prompt needs, and they are gone with the runner
+    # otherwise. Artifacts of a public repository can be downloaded by anyone signed in, so the
+    # bundle is checked for the key and dropped if it holds it.
+    - name: Collect opencode's session and log
+      id: collect
+      if: always()
+      shell: bash
+      env:
+        API_KEY: ${{ inputs.api-key }}
+        GH_TOKEN_IN: ${{ inputs.github-token }}
+        # opencode runs here in the PR's worktree too; without this a plugin in the PR's
+        # .opencode/ would load and run.
+        OPENCODE_DISABLE_PROJECT_CONFIG: "true"
+      run: |
+        out="$RUNNER_TEMP/ollama-cloud-review/logs"
+        mkdir -p "$out"
+        command -v opencode >/dev/null || { echo "opencode was not installed; nothing to collect"; exit 0; }
+        # Assigned first so a failing list stops the step instead of collecting nothing.
+        sessions=$(env -u API_KEY -u GH_TOKEN_IN opencode session list --format json)
+        for id in $(jq -r '.[].id' <<< "$sessions"); do
+          env -u API_KEY -u GH_TOKEN_IN opencode export "$id" > "$out/session-$id.json" || echo "::warning::export of $id failed"
+        done
+        log_dir="${XDG_DATA_HOME:-$HOME/.local/share}/opencode/log"
+        [ -d "$log_dir" ] && cp -r "$log_dir" "$out/log"
+        # 0 is a match and 1 no match; anything else means the check did not run, so it is
+        # treated as a match rather than letting the bundle through unchecked.
+        rc=0; grep -rqF -e "$API_KEY" -e "$GH_TOKEN_IN" "$out" || rc=$?
+        if [ "$rc" != 1 ]; then
+          rm -rf "$out"
+          echo "::error::The collected logs contain the API key or the GitHub token, or could not be checked (grep exit $rc); they were deleted, not uploaded."
+          exit 1
+        fi
+
+    # Only after the collect step finished: a failure before its key check (a failed export
+    # or copy) would otherwise upload files nobody checked.
+    - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+      if: always() && steps.collect.outcome == 'success'
+      with:
+        name: ollama-cloud-review-logs
+        path: ${{ runner.temp }}/ollama-cloud-review/logs
+        if-no-files-found: ignore
+        # Long enough to look at a week of reviews; the bundle is about 15 KB a run.
+        retention-days: 14
