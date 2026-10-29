@@ -105,6 +105,7 @@ runs:
     # otherwise. Artifacts of a public repository can be downloaded by anyone signed in, so the
     # bundle is checked for the key and dropped if it holds it.
     - name: Collect opencode's session and log
+      id: collect
       if: always()
       shell: bash
       env:
@@ -133,8 +134,10 @@ runs:
           exit 1
         fi
 
+    # Only after the collect step finished: a failure before its key check (a failed export
+    # or copy) would otherwise upload files nobody checked.
     - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
-      if: always()
+      if: always() && steps.collect.outcome == 'success'
       with:
         name: ollama-cloud-review-logs
         path: ${{ runner.temp }}/ollama-cloud-review/logs
