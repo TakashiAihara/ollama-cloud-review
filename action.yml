@@ -28,6 +28,7 @@ runs:
       env:
         MODEL: ${{ inputs.model }}
         API_KEY: ${{ inputs.api-key }}
+        GH_TOKEN_IN: ${{ inputs.github-token }}
         EVENT: ${{ github.event_name }}
         RUNNER_OS_NAME: ${{ runner.os }}
       run: |
@@ -35,6 +36,8 @@ runs:
         [ "$RUNNER_OS_NAME" = Linux ] || { echo "::error::Run this on a Linux runner."; exit 1; }
         [ -n "$MODEL" ] || { echo "::error::The model input is empty."; exit 1; }
         [ -n "$API_KEY" ] || { echo "::error::The api-key input is empty."; exit 1; }
+        # Also guards the key check below: an empty pattern would match every line.
+        [ -n "$GH_TOKEN_IN" ] || { echo "::error::The github-token input is empty."; exit 1; }
         [ "$EVENT" = pull_request ] || { echo "::error::Run this on pull_request, not $EVENT."; exit 1; }
 
     - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
