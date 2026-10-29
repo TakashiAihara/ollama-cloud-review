@@ -112,6 +112,7 @@ runs:
         GH_TOKEN_IN: ${{ inputs.github-token }}
         # opencode runs here in the PR's worktree too; without this a plugin in the PR's
         # .opencode/ would load and run.
+        OPENCODE_DISABLE_PROJECT_CONFIG: "true"
       run: |
         out="$RUNNER_TEMP/ollama-cloud-review/logs"
         mkdir -p "$out"
