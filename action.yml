@@ -7,9 +7,9 @@ branding:
 
 inputs:
   model:
-    description: Ollama Cloud model name as https://ollama.com/api/tags lists it, for example glm-5.3-flash
-    # No default: the free models found neither known bug in the trial the README describes,
-    # and models are withdrawn without notice.
+    description: Ollama Cloud model as opencode's ollama-cloud provider names it (https://models.dev), for example glm-5.3-flash
+    # No default: the models usable without credits found neither known bug in the trial the
+    # README describes, and which models are usable without credits has changed before.
     required: true
   api-key:
     description: Ollama API key (https://ollama.com/settings/keys)
@@ -29,7 +29,10 @@ runs:
         MODEL: ${{ inputs.model }}
         API_KEY: ${{ inputs.api-key }}
         EVENT: ${{ github.event_name }}
+      RUNNER_OS_NAME: ${{ runner.os }}
       run: |
+        # Paths below go into JSON unescaped; a Windows path's backslashes would break it.
+        [ "$RUNNER_OS_NAME" = Linux ] || { echo "::error::Run this on a Linux runner."; exit 1; }
         [ -n "$MODEL" ] || { echo "::error::The model input is empty."; exit 1; }
         [ -n "$API_KEY" ] || { echo "::error::The api-key input is empty."; exit 1; }
         [ "$EVENT" = pull_request ] || { echo "::error::Run this on pull_request, not $EVENT."; exit 1; }
@@ -106,18 +109,24 @@ runs:
       shell: bash
       env:
         API_KEY: ${{ inputs.api-key }}
+        GH_TOKEN_IN: ${{ inputs.github-token }}
+        # opencode runs here in the PR's worktree too; without this a plugin in the PR's
+        # .opencode/ would load and run.
+        OPENCODE_DISABLE_PROJECT_CONFIG: "true"
       run: |
         out="$RUNNER_TEMP/ollama-cloud-review/logs"
         mkdir -p "$out"
         command -v opencode >/dev/null || { echo "opencode was not installed; nothing to collect"; exit 0; }
-        for id in $(opencode session list --format json | jq -r '.[].id'); do
-          opencode export "$id" > "$out/session-$id.json" || echo "::warning::export of $id failed"
+        # Assigned first so a failing list stops the step instead of collecting nothing.
+        sessions=$(env -u API_KEY -u GH_TOKEN_IN opencode session list --format json)
+        for id in $(jq -r '.[].id' <<< "$sessions"); do
+          env -u API_KEY -u GH_TOKEN_IN opencode export "$id" > "$out/session-$id.json" || echo "::warning::export of $id failed"
         done
         log_dir="${XDG_DATA_HOME:-$HOME/.local/share}/opencode/log"
         [ -d "$log_dir" ] && cp -r "$log_dir" "$out/log"
-        if grep -rqF -- "$API_KEY" "$out"; then
+        if grep -rqF -e "$API_KEY" -e "$GH_TOKEN_IN" "$out"; then
           rm -rf "$out"
-          echo "::error::The collected logs contain the API key; they were deleted, not uploaded."
+          echo "::error::The collected logs contain the API key or the GitHub token; they were deleted, not uploaded."
           exit 1
         fi
 
@@ -127,4 +136,5 @@ runs:
         name: ollama-cloud-review-logs
         path: ${{ runner.temp }}/ollama-cloud-review/logs
         if-no-files-found: ignore
+        # Long enough to look at a week of reviews; the bundle is about 15 KB a run.
         retention-days: 14
