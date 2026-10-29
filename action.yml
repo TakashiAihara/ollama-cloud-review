@@ -29,7 +29,7 @@ runs:
         MODEL: ${{ inputs.model }}
         API_KEY: ${{ inputs.api-key }}
         EVENT: ${{ github.event_name }}
-      RUNNER_OS_NAME: ${{ runner.os }}
+        RUNNER_OS_NAME: ${{ runner.os }}
       run: |
         # Paths below go into JSON unescaped; a Windows path's backslashes would break it.
         [ "$RUNNER_OS_NAME" = Linux ] || { echo "::error::Run this on a Linux runner."; exit 1; }
