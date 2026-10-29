@@ -124,9 +124,12 @@ runs:
         done
         log_dir="${XDG_DATA_HOME:-$HOME/.local/share}/opencode/log"
         [ -d "$log_dir" ] && cp -r "$log_dir" "$out/log"
-        if grep -rqF -e "$API_KEY" -e "$GH_TOKEN_IN" "$out"; then
+        # 0 is a match and 1 no match; anything else means the check did not run, so it is
+        # treated as a match rather than letting the bundle through unchecked.
+        rc=0; grep -rqF -e "$API_KEY" -e "$GH_TOKEN_IN" "$out" || rc=$?
+        if [ "$rc" != 1 ]; then
           rm -rf "$out"
-          echo "::error::The collected logs contain the API key or the GitHub token; they were deleted, not uploaded."
+          echo "::error::The collected logs contain the API key or the GitHub token, or could not be checked (grep exit $rc); they were deleted, not uploaded."
           exit 1
         fi
 
