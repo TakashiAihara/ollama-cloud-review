@@ -123,7 +123,6 @@ runs:
         for id in $(jq -r '.[].id' <<< "$sessions"); do
           env -u API_KEY -u GH_TOKEN_IN opencode export "$id" > "$out/session-$id.json" || echo "::warning::export of $id failed"
         done
-        false
         log_dir="${XDG_DATA_HOME:-$HOME/.local/share}/opencode/log"
         [ -d "$log_dir" ] && cp -r "$log_dir" "$out/log"
         # 0 is a match and 1 no match; anything else means the check did not run, so it is
