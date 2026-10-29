@@ -78,6 +78,7 @@ runs:
         # 40321742692). toJSON quotes the caller's model so a stray quote cannot rewrite the
         # permissions around it.
         OPENCODE_DISABLE_PROJECT_CONFIG: "true"
+        OPENCODE_LOG_LEVEL: DEBUG
         OPENCODE_CONFIG_CONTENT: >-
           {"default_agent": "plan", "share": "disabled",
           "small_model": ${{ toJSON(format('ollama-cloud/{0}', inputs.model)) }}, "permission": {"edit": "deny",
