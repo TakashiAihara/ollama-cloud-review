@@ -114,6 +114,9 @@ runs:
         # the directory the agent may read below.
         XDG_DATA_HOME: ${{ runner.temp }}/ollama-cloud-review-data/data
         XDG_CONFIG_HOME: ${{ runner.temp }}/ollama-cloud-review-data/config
+        # Set to an absolute path it would take precedence over the data directory; empty is
+        # read as unset (1.19.5 core/src/database/database.ts).
+        OPENCODE_DB: ""
         MODEL: ollama-cloud/${{ inputs.model }}
         USE_GITHUB_TOKEN: "true"
         # 1.17.0 to 1.19.0 read it (1.19.4 does not): unset, they share a public repository's
@@ -174,6 +177,9 @@ runs:
         # The review step's own directories, so only this run's sessions and log are read.
         XDG_DATA_HOME: ${{ runner.temp }}/ollama-cloud-review-data/data
         XDG_CONFIG_HOME: ${{ runner.temp }}/ollama-cloud-review-data/config
+        # Set to an absolute path it would take precedence over the data directory; empty is
+        # read as unset (1.19.5 core/src/database/database.ts).
+        OPENCODE_DB: ""
       run: |
         out="$RUNNER_TEMP/ollama-cloud-review/logs"
         mkdir -p "$out"
