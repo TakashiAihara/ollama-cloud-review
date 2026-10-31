@@ -1,0 +1,11 @@
+reviews:
+  path_instructions:
+    - path: "action.yml"
+      instructions: |
+        This is a composite action other repositories run with their secrets.
+        Check that the API key and the GitHub token cannot reach a log, the artifact or the comment,
+        that nothing from the pull request (files, opencode config, plugins, skills) can widen what the
+        agent may do, and that every third-party action is pinned to a commit SHA.
+    - path: "README.md"
+      instructions: |
+        Check that every claim about inputs, permissions, limits and behaviour matches action.yml.
