@@ -17,6 +17,12 @@ inputs:
   github-token:
     description: Token opencode comments with. Needs pull-requests and issues write.
     default: ${{ github.token }}
+  opencode-version:
+    description: opencode release to review with, as X.Y.Z (1.x; 2.x has no github run command)
+    # The version openrouter-review pinned after checking it (run 41157201190). Raised here on
+    # purpose, not by an upstream release: v2 has no github run command at all (checked at
+    # v2.2.5), so leaving 1.x means rewriting the review step.
+    default: 1.19.5
 
 runs:
   using: composite
@@ -63,14 +69,50 @@ runs:
         mkdir -p "$RUNNER_TEMP/ollama-cloud-review"
         git diff "$merge_base" "$HEAD_SHA" > "$RUNNER_TEMP/ollama-cloud-review/pr.diff"
 
-    # shortcut: the action installs whatever opencode release is latest, so the binary is
-    # not pinned, and opencode fetches the PR branch anonymously, which only a public
-    # repository allows. Pin it and give the fetch credentials before a private one calls this.
-    - uses: anomalyco/opencode/github@148842ef7cb1bc34192b3fff57d0f9721ab9c801 # v1.19.4
+    # opencode's GitHub action takes no version and installs whatever release GitHub marks
+    # latest, so this installs the pinned release and runs the command that action ends with.
+    # The download is checked against the digest GitHub records for the asset.
+    - name: Install opencode ${{ inputs.opencode-version }}
+      shell: bash
       env:
+        VERSION: ${{ inputs.opencode-version }}
+        GH_TOKEN: ${{ inputs.github-token }}
+      # Only an immutable release is taken: its assets and digests cannot be replaced after
+      # publishing, so the digest pins the bytes.
+      run: |
+        [[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || { echo "::error::opencode-version must be X.Y.Z, got '$VERSION'"; exit 1; }
+        [ "$(uname -m)" = x86_64 ] || { echo "::error::Run this on an x64 runner, not $(uname -m)."; exit 1; }
+        asset=opencode-linux-x64.tar.gz
+        release=$(gh api "repos/anomalyco/opencode/releases/tags/v$VERSION")
+        [ "$(jq -r .immutable <<< "$release")" = true ] || { echo "::error::opencode v$VERSION is not an immutable release"; exit 1; }
+        digest=$(jq -r --arg a "$asset" '.assets[] | select(.name == $a) | .digest' <<< "$release")
+        [[ "$digest" == sha256:* ]] || { echo "::error::No sha256 digest for $asset in opencode v$VERSION"; exit 1; }
+        dir="$RUNNER_TEMP/opencode-bin"
+        mkdir -p "$dir"
+        curl -fsSL --retry 3 -o "$RUNNER_TEMP/$asset" "https://github.com/anomalyco/opencode/releases/download/v$VERSION/$asset"
+        echo "${digest#sha256:}  $RUNNER_TEMP/$asset" | sha256sum -c -
+        # Only the opencode binary goes on PATH, so nothing else in the archive can shadow a
+        # command the later steps run.
+        tar -xzf "$RUNNER_TEMP/$asset" -C "$dir" opencode
+        installed=$("$dir/opencode" --version)
+        [ "$installed" = "$VERSION" ] || { echo "::error::Installed opencode reports $installed, not $VERSION"; exit 1; }
+        echo "$dir" >> "$GITHUB_PATH"
+
+    # shortcut: opencode fetches the PR branch anonymously, which only a public repository
+    # allows. Give the fetch credentials before a private one calls this.
+    - name: Review with opencode
+      shell: bash
+      run: opencode github run
+      env:
+        MODEL: ollama-cloud/${{ inputs.model }}
+        USE_GITHUB_TOKEN: "true"
+        # 1.17.0 to 1.19.0 read it (1.19.4 does not): unset, they share a public repository's
+        # session through opencode.ai.
+        SHARE: "false"
         OLLAMA_API_KEY: ${{ inputs.api-key }}
         GITHUB_TOKEN: ${{ inputs.github-token }}
-        # The action's agent input is not read at v1.19.4, so the agent comes from config.
+        # opencode github run does not read an agent (checked at 1.19.4 and 1.19.5), so it
+        # comes from config.
         # Without it the build agent may edit files, and the dirty tree turns the run into
         # a push that contents: read refuses, losing the review. No shell at all: an allowed
         # git command could still write through a redirect or an abbreviated --output, and a
@@ -84,16 +126,16 @@ runs:
         # 40321742692). toJSON quotes the caller's model so a stray quote cannot rewrite the
         # permissions around it.
         OPENCODE_DISABLE_PROJECT_CONFIG: "true"
-
+        # A CLAUDE.md in a subdirectory would otherwise be attached when the agent reads a
+        # file there, bringing the implementer's instructions into the review. AGENTS.md and
+        # CONTEXT.md have no such switch.
+        OPENCODE_DISABLE_CLAUDE_CODE_PROMPT: "true"
         OPENCODE_CONFIG_CONTENT: >-
           {"default_agent": "plan", "share": "disabled",
           "small_model": ${{ toJSON(format('ollama-cloud/{0}', inputs.model)) }}, "permission": {"edit": "deny",
           "bash": "deny", "webfetch": "deny", "websearch": "deny", "external_directory":
           {"*": "deny", "${{ runner.temp }}/ollama-cloud-review/*": "allow"}}}
-      with:
-        model: ollama-cloud/${{ inputs.model }}
-        use_github_token: true
-        prompt: |
+        PROMPT: |
           このプルリクエストをレビューし、結果を日本語で 1 件のコメントにまとめてください。
           - 変更の diff は `${{ runner.temp }}/ollama-cloud-review/pr.diff` にある。まずそれを読み、周りのコードはリポジトリのファイルを読んで確かめる
           - 既存のコメントやレビューの指摘は繰り返さず、変更そのものを独立に見る
@@ -121,16 +163,23 @@ runs:
         out="$RUNNER_TEMP/ollama-cloud-review/logs"
         mkdir -p "$out"
         command -v opencode >/dev/null || { echo "opencode was not installed; nothing to collect"; exit 0; }
-        # Assigned first so a failing list stops the step instead of collecting nothing.
-        sessions=$(env -u API_KEY -u GH_TOKEN_IN opencode session list --format json)
-        for id in $(jq -r '.[].id' <<< "$sessions"); do
-          env -u API_KEY -u GH_TOKEN_IN opencode export "$id" > "$out/session-$id.json" || echo "::warning::export of $id failed"
+        # session list shows only top-level sessions; the table also holds the subagent
+        # sessions the plan agent starts through its task tool. Each value is assigned on its
+        # own so a failing query or jq stops the step instead of collecting nothing.
+        sessions=$(env -u API_KEY -u GH_TOKEN_IN opencode db "select id from session" --format json)
+        ids=$(jq -r '.[].id' <<< "$sessions")
+        for id in $ids; do
+          # A failed export can leave a partial file, which could hold a prefix of the key
+          # that the exact-match check below would not find.
+          env -u API_KEY -u GH_TOKEN_IN opencode export "$id" > "$out/session-$id.json" || { rm -f "$out/session-$id.json"; echo "::warning::export of $id failed"; }
         done
         log_dir="${XDG_DATA_HOME:-$HOME/.local/share}/opencode/log"
         [ -d "$log_dir" ] && cp -r "$log_dir" "$out/log"
         # 0 is a match and 1 no match; anything else means the check did not run, so it is
-        # treated as a match rather than letting the bundle through unchecked.
-        rc=0; grep -rqF -e "$API_KEY" -e "$GH_TOKEN_IN" "$out" || rc=$?
+        # treated as a match rather than letting the bundle through unchecked. Both values
+        # are checked non-empty at the start, so neither pattern is empty (an empty one matches
+        # every line). Patterns go through a file so the values stay out of grep's argv.
+        rc=0; grep -rqF -f <(printf '%s\n' "$API_KEY" "$GH_TOKEN_IN") "$out" || rc=$?
         if [ "$rc" != 1 ]; then
           rm -rf "$out"
           echo "::error::The collected logs contain the API key or the GitHub token, or could not be checked (grep exit $rc); they were deleted, not uploaded."

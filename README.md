@@ -52,7 +52,8 @@ jobs:
 - Without purchased credits only a few models answer; the rest return 402 "not included in your free usage" (observed 2026-10-29). The pricing page no longer mentions free usage or its size, and it has changed within days, so check before relying on it. One review was 3 to 5 model requests in the trial below.
 - Ollama states no spending cap for an API key. A leaked key with credits behind it can spend them; without credits it reaches the models above only.
 - The action checks out the PR itself (full history, cleaning the workspace), so put it first in the job.
-- Public repositories only for now. opencode fetches the PR branch without credentials, and the opencode binary the action installs is the latest release, not a pinned one.
+- Public repositories only for now: opencode fetches the PR branch without credentials.
+- opencode is pinned by `opencode-version` (default `1.19.5`) and checked against the sha256 GitHub records for the release; only immutable 1.x releases are taken, since 2.x has no `github run` command. Linux x64 runners only.
 - The model reads the PR's diff and messages, so text in them can steer what the review says. With no shell and no edits, the comment is the only thing it writes.
 
 ## Free models tried (2026-10)
