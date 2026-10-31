@@ -45,7 +45,7 @@ jobs:
           api-key: ${{ secrets.OLLAMA_API_KEY }}
 ```
 
-`@v1` follows the latest 1.x release. Releases are immutable, so `@v1.0.0` (or its commit) pins exactly what you reviewed.
+`@v1` is a major tag moved by hand to each 1.x release. Releases are immutable, so `@v1.0.0` (or its commit SHA) pins exactly what you reviewed.
 
 ### Inputs
 
