@@ -86,6 +86,8 @@ runs:
       run: |
         config=.github/ollama-cloud-review.yaml
         out="$RUNNER_TEMP/ollama-cloud-review/instructions.md"
+        # The file is appended to below; a second call in the same job must not inherit it.
+        rm -f "$out"
         git cat-file -e "$BASE_SHA:$config" 2>/dev/null || { echo "No $config on the base branch"; exit 0; }
         yaml=$(git show "$BASE_SHA:$config")
         # The file exists only to carry this list, so a missing or misspelt key is an error.
