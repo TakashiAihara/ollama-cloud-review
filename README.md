@@ -3,7 +3,7 @@
 A GitHub Action that reviews a pull request with [opencode](https://github.com/anomalyco/opencode) on an [Ollama Cloud](https://ollama.com/pricing) model and posts the review as one comment in Japanese.
 
 - You name the model; there is no default.
-- The agent can only read: it runs as opencode's `plan` agent with no shell, no file edits, no web fetch or search, and no paths outside the repository except the PR's diff, which a step writes beforehand. The repository's own opencode config (`opencode.json`, `.opencode/`), its `.claude/skills` and `.agents/skills`, and `CLAUDE.md` files are not loaded, so a PR cannot widen these. An `AGENTS.md` in the PR is still read; opencode has no switch for it.
+- The agent can only read: it runs as opencode's `plan` agent with no shell, no file edits, no web fetch or search, and no paths outside the repository except the PR's diff, which a step writes beforehand. The repository's own opencode config (`opencode.json`, `.opencode/`), its `.claude/skills` and `.agents/skills`, and `CLAUDE.md` files are not loaded, so a PR cannot widen these. An `AGENTS.md` or `CONTEXT.md` in the PR is still read; opencode has no switch for them.
 - opencode's session (prompts, replies, tool calls, and the model's reasoning when it gives any) and its log are uploaded as the artifact `ollama-cloud-review-logs`, kept 14 days, for tuning the prompt. The session holds the PR's diff and the files the agent read, and a public repository's artifacts can be downloaded by anyone signed in. The step drops the bundle instead if it contains the API key or the GitHub token, or if that check fails.
 - Ollama states that prompts and responses to cloud models are never logged or trained on ([pricing FAQ](https://ollama.com/pricing)).
 
@@ -64,7 +64,7 @@ There are no outputs; the result is the comment on the PR and the artifact.
 - Ollama states no spending cap for an API key. A leaked key with credits behind it can spend them; without credits it reaches the models above only.
 - The action checks out the PR itself (full history, cleaning the workspace), so put it first in the job.
 - Public repositories only for now: opencode fetches the PR branch without credentials.
-- opencode is pinned by `opencode-version` (default `1.19.5`) and checked against the sha256 GitHub records for the release; only immutable 1.x releases are taken, since 2.x has no `github run` command. Linux x64 runners only, with `gh`, `jq` and `curl` on PATH (GitHub-hosted Ubuntu runners have them).
+- opencode is pinned by `opencode-version` (default `1.19.5`) and checked against the sha256 GitHub records for the release; only immutable 1.x releases are taken, since 2.x has no `github run` command. Linux x64 runners only, with `git`, `gh`, `jq` and `curl` on PATH (GitHub-hosted Ubuntu runners have them).
 - opencode 1.x is the only line this runs on. If opencode stops releasing 1.x, the action stays on the last 1.x release until the review step is rewritten for 2.x.
 - The model reads the PR's diff and messages, so text in them can steer what the review says. With no shell and no edits, the comment is the only thing it writes.
 

@@ -18,7 +18,7 @@ inputs:
     description: Token opencode comments with. Needs pull-requests and issues write.
     default: ${{ github.token }}
   opencode-version:
-    description: opencode release to review with, as X.Y.Z (1.x; 2.x has no github run command)
+    description: opencode release to review with, as 1.Y.Z (2.x has no github run command)
     # The version openrouter-review pinned after checking it (run 41157201190). It changes only
     # when someone edits this line: a new upstream release does not move it. v2 has no github
     # run command at all (checked at v2.2.5), so leaving 1.x means rewriting the review step.
@@ -89,6 +89,9 @@ runs:
         [ "$(jq -r .immutable <<< "$release")" = true ] || { echo "::error::opencode v$VERSION is not an immutable release"; exit 1; }
         digest=$(jq -r --arg a "$asset" '.assets[] | select(.name == $a) | .digest' <<< "$release")
         [[ "$digest" == sha256:* ]] || { echo "::error::No sha256 digest for $asset in opencode v$VERSION"; exit 1; }
+        # The runner empties RUNNER_TEMP per job, not per call; a second call in the same job
+        # starts from empty directories too.
+        rm -rf "$RUNNER_TEMP/ollama-cloud-review-data"
         dir="$RUNNER_TEMP/opencode-bin"
         mkdir -p "$dir"
         curl -fsSL --retry 3 -o "$RUNNER_TEMP/$asset" "https://github.com/anomalyco/opencode/releases/download/v$VERSION/$asset"
@@ -105,10 +108,12 @@ runs:
       shell: bash
       run: '"$RUNNER_TEMP/opencode-bin/opencode" github run'
       env:
-        # opencode keeps its database and log under the data directory; a fresh one per run
-        # keeps a self-hosted runner's earlier runs, and other repositories, out of what the
-        # collect step exports.
-        XDG_DATA_HOME: ${{ runner.temp }}/ollama-cloud-review/opencode-data
+        # opencode keeps its database and log under the data directory and reads a global
+        # config from the config directory. Directories of this run's own keep a self-hosted
+        # runner's earlier runs, other repositories and the host's config out. They sit outside
+        # the directory the agent may read below.
+        XDG_DATA_HOME: ${{ runner.temp }}/ollama-cloud-review-data/data
+        XDG_CONFIG_HOME: ${{ runner.temp }}/ollama-cloud-review-data/config
         MODEL: ollama-cloud/${{ inputs.model }}
         USE_GITHUB_TOKEN: "true"
         # 1.17.0 to 1.19.0 read it (1.19.4 does not): unset, they share a public repository's
@@ -166,8 +171,9 @@ runs:
         # opencode runs here in the PR's worktree too; without this a plugin in the PR's
         # .opencode/ would load and run.
         OPENCODE_DISABLE_PROJECT_CONFIG: "true"
-        # The review step's own data directory, so only this run's sessions and log are read.
-        XDG_DATA_HOME: ${{ runner.temp }}/ollama-cloud-review/opencode-data
+        # The review step's own directories, so only this run's sessions and log are read.
+        XDG_DATA_HOME: ${{ runner.temp }}/ollama-cloud-review-data/data
+        XDG_CONFIG_HOME: ${{ runner.temp }}/ollama-cloud-review-data/config
       run: |
         out="$RUNNER_TEMP/ollama-cloud-review/logs"
         mkdir -p "$out"
